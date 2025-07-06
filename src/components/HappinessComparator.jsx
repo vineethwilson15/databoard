@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Line, Scatter } from 'react-chartjs-2'
-import { getWorldBankData, getHappinessData, getCountries, calculateCorrelation } from '../services/apiService'
+import { getWorldBankData, getHappinessData, getHappinessTimeSeries, getCountries, calculateCorrelation } from '../services/apiService'
 import { getLineChartConfig, getScatterChartConfig, createTrendDataset, createScatterDataset, CHART_COLORS } from '../utils/chartConfig'
 
 const HappinessComparator = () => {
@@ -65,15 +65,30 @@ const HappinessComparator = () => {
         return
       }
 
-      // Mock happiness data over time (in real implementation, this would come from happiness API)
-      const mockHappinessOverTime = indicatorData.map((item, index) => ({
-        year: item.year,
-        value: 7.2 + (Math.sin(index * 0.5) * 0.3) // Mock happiness trend
-      }))
-
-      const years = indicatorData.map(item => item.year)
-      const indicatorValues = indicatorData.map(item => item.value)
-      const happinessValues = mockHappinessOverTime.map(item => item.value)
+      // Try to get real happiness time series data
+      console.log('Fetching happiness time series for', selectedCountry)
+      const happinessTimeSeriesData = await getHappinessTimeSeries(selectedCountry, parseInt(startYear), parseInt(endYear))
+      
+      // Align data by years that exist in both datasets
+      const commonYears = indicatorData
+        .map(item => item.year)
+        .filter(year => happinessTimeSeriesData.some(h => h.year === year))
+        .sort((a, b) => a - b)
+      
+      if (commonYears.length === 0) {
+        setError('No overlapping years found between indicator and happiness data')
+        return
+      }
+      
+      const alignedIndicatorData = commonYears.map(year => {
+        const indicatorItem = indicatorData.find(item => item.year === year)
+        return indicatorItem ? indicatorItem.value : null
+      }).filter(value => value !== null)
+      
+      const alignedHappinessData = commonYears.map(year => {
+        const happinessItem = happinessTimeSeriesData.find(item => item.year === year)
+        return happinessItem ? happinessItem.value : null
+      }).filter(value => value !== null)
 
       const indicatorLabel = indicators.find(ind => ind.value === selectedIndicator)?.label || 'Indicator'
       const countryName = countries.find(country => country.code === selectedCountry)?.name || selectedCountry
@@ -81,7 +96,7 @@ const HappinessComparator = () => {
       // Create happiness trend chart
       const happinessDataset = createTrendDataset(
         'Happiness Score',
-        happinessValues,
+        alignedHappinessData,
         CHART_COLORS.success,
         CHART_COLORS.successBorder
       )
@@ -89,13 +104,13 @@ const HappinessComparator = () => {
       const happinessConfig = getLineChartConfig(
         `Happiness Index Trends for ${countryName}`,
         [happinessDataset],
-        years
+        commonYears
       )
 
       // Create indicator trend chart
       const indicatorDataset = createTrendDataset(
         indicatorLabel,
-        indicatorValues,
+        alignedIndicatorData,
         CHART_COLORS.secondary,
         CHART_COLORS.secondaryBorder
       )
@@ -103,13 +118,13 @@ const HappinessComparator = () => {
       const indicatorConfig = getLineChartConfig(
         `${indicatorLabel} Trends for ${countryName}`,
         [indicatorDataset],
-        years
+        commonYears
       )
 
       // Create correlation scatter plot
-      const scatterData = indicatorValues.map((value, index) => ({
+      const scatterData = alignedIndicatorData.map((value, index) => ({
         x: value,
-        y: happinessValues[index]
+        y: alignedHappinessData[index]
       }))
 
       const scatterDataset = createScatterDataset(
@@ -126,7 +141,7 @@ const HappinessComparator = () => {
       scatterConfig.data.datasets = [scatterDataset]
 
       // Calculate correlation
-      const correlationValue = calculateCorrelation(indicatorValues, happinessValues)
+      const correlationValue = calculateCorrelation(alignedIndicatorData, alignedHappinessData)
 
       setHappinessChartData(happinessConfig)
       setIndicatorChartData(indicatorConfig)
